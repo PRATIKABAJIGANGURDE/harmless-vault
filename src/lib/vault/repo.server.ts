@@ -1,10 +1,12 @@
 // Server-only data layer. Every rule (PIN checks, lock enforcement, cascade
 // deletes, rate limiting) lives here, so no client can bypass it: the database
-// tables are not reachable from the browser at all.
+// is a local SQLite file the browser cannot reach at all.
 //
-// This module is the contract a future Node.js/Express + SQLite implementation
-// on the Narzo 50A must reproduce. See docs/API.md.
+// Backing store: SQLite (node:sqlite) + local filesystem storage. The same
+// contract is what a Node.js/Express deployment on the Narzo 50A runs.
+// See docs/API.md.
 
+import { all, get, newId, nowIso, placeholders, run } from "./db.server";
 import { hashPin, hashToken, randomHex, verifyPin } from "./pin.server";
 import { isValidPin, sanitizeFileName, sanitizeFolderName } from "./sanitize";
 import { getStorageService } from "./storage.server";
@@ -51,11 +53,6 @@ type FileRow = {
   updated_at: string;
 };
 
-async function db() {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  return supabaseAdmin;
-}
-
 function notFound(what: string): VaultError {
   return new VaultError("NOT_FOUND", `That ${what} no longer exists.`, 404);
 }
@@ -64,30 +61,25 @@ function invalid(message: string): VaultError {
   return new VaultError("VALIDATION", message, 400);
 }
 
-function dbError(message: string): VaultError {
-  // Never leak raw provider/database detail to the client.
-  console.error("[vault] database error:", message);
-  return new VaultError("SERVER_ERROR", "The vault could not complete that request.", 500);
-}
-
 function assertPin(pin: string) {
   if (!isValidPin(pin)) throw invalid("The PIN must be exactly 4 digits.");
 }
 
 function folderName(name: string) {
   const clean = sanitizeFolderName(name);
-  if (!clean || clean === "untitled") {
-    if (!String(name ?? "").trim()) throw invalid("Please enter a name.");
-  }
+  if (!String(name ?? "").trim()) throw invalid("Please enter a name.");
   return clean;
 }
 
+/** SQL LIKE is used for search; escape the wildcards a user could type. */
+function likeTerm(value: string): string {
+  return `%${value.replace(/[%_\\]/g, "")}%`;
+}
+
 async function getFolderRow(id: string): Promise<FolderRow> {
-  const supabase = await db();
-  const { data, error } = await supabase.from("folders").select("*").eq("id", id).maybeSingle();
-  if (error) throw dbError(error.message);
-  if (!data) throw notFound("folder");
-  return data as FolderRow;
+  const row = await get<FolderRow>("SELECT * FROM folders WHERE id = ?", [id]);
+  if (!row) throw notFound("folder");
+  return row;
 }
 
 /** Folder ids from the root down to (and including) `id`. */
@@ -109,15 +101,13 @@ async function validTokenFolderIds(tokens: string[]): Promise<Set<string>> {
   const unlocked = new Set<string>();
   const clean = tokens.filter(Boolean);
   if (clean.length === 0) return unlocked;
-  const supabase = await db();
   const hashes = await Promise.all(clean.map((t) => hashToken(t)));
-  const { data, error } = await supabase
-    .from("folder_unlock_sessions")
-    .select("folder_id, expires_at")
-    .in("token_hash", hashes)
-    .gt("expires_at", new Date().toISOString());
-  if (error) throw dbError(error.message);
-  for (const row of data ?? []) unlocked.add(row.folder_id as string);
+  const rows = await all<{ folder_id: string }>(
+    `SELECT folder_id FROM folder_unlock_sessions
+      WHERE token_hash IN (${placeholders(hashes.length)}) AND expires_at > ?`,
+    [...hashes, nowIso()],
+  );
+  for (const row of rows) unlocked.add(row.folder_id);
   return unlocked;
 }
 
@@ -147,31 +137,31 @@ async function hasAccess(folderId: string | null, tokens: string[]): Promise<boo
 }
 
 async function countsFor(folderIds: string[]) {
-  const supabase = await db();
   const counts = new Map<string, { files: number; folders: number; size: number }>();
   for (const id of folderIds) counts.set(id, { files: 0, folders: 0, size: 0 });
   if (folderIds.length === 0) return counts;
 
-  const [{ data: files, error: fErr }, { data: subs, error: sErr }] = await Promise.all([
-    supabase
-      .from("files")
-      .select("folder_id, size")
-      .in("folder_id", folderIds)
-      .eq("status", "ready"),
-    supabase.from("folders").select("parent_id").in("parent_id", folderIds),
+  const marks = placeholders(folderIds.length);
+  const [files, subs] = await Promise.all([
+    all<{ folder_id: string; size: number }>(
+      `SELECT folder_id, size FROM files WHERE folder_id IN (${marks}) AND status = 'ready'`,
+      folderIds,
+    ),
+    all<{ parent_id: string }>(
+      `SELECT parent_id FROM folders WHERE parent_id IN (${marks})`,
+      folderIds,
+    ),
   ]);
-  if (fErr) throw dbError(fErr.message);
-  if (sErr) throw dbError(sErr.message);
 
-  for (const f of files ?? []) {
-    const entry = counts.get(f.folder_id as string);
+  for (const f of files) {
+    const entry = counts.get(f.folder_id);
     if (entry) {
       entry.files += 1;
       entry.size += Number(f.size ?? 0);
     }
   }
-  for (const s of subs ?? []) {
-    const entry = counts.get(s.parent_id as string);
+  for (const s of subs) {
+    const entry = counts.get(s.parent_id);
     if (entry) entry.folders += 1;
   }
   return counts;
@@ -212,10 +202,12 @@ function toFile(row: FileRow, previewUrl: string | null = null): VaultFile {
   };
 }
 
-/** Signed, short-lived inline URLs for image files only. */
+/** Short-lived inline URLs for image files only. */
 async function withPreviews(rows: FileRow[]): Promise<VaultFile[]> {
   const storage = getStorageService();
-  const images = rows.filter((r) => r.mime_type.startsWith("image/")).slice(0, MAX_PREVIEWS_PER_VIEW);
+  const images = rows
+    .filter((r) => r.mime_type.startsWith("image/"))
+    .slice(0, MAX_PREVIEWS_PER_VIEW);
   const previews = new Map<string, string>();
   await Promise.all(
     images.map(async (row) => {
@@ -245,40 +237,39 @@ export async function getFolderView(
   tokens: string[],
   options: { search?: string; sort?: SortKey; direction?: SortDirection } = {},
 ): Promise<FolderView> {
-  const supabase = await db();
   const chain = await assertAccess(folderId, tokens);
   const unlocked = await validTokenFolderIds(tokens);
   const search = (options.search ?? "").trim();
 
-  const folderQuery = folderId
-    ? supabase.from("folders").select("*").eq("parent_id", folderId)
-    : supabase.from("folders").select("*").is("parent_id", null);
-  let fileQuery = folderId
-    ? supabase.from("files").select("*").eq("folder_id", folderId)
-    : supabase.from("files").select("*").is("folder_id", null);
-  fileQuery = fileQuery.eq("status", "ready");
-  if (search) fileQuery = fileQuery.ilike("name", `%${search.replace(/[%_]/g, "")}%`);
+  const parentClause = folderId ? "parent_id = ?" : "parent_id IS NULL";
+  const folderParams: unknown[] = folderId ? [folderId] : [];
+  const fileClause = folderId ? "folder_id = ?" : "folder_id IS NULL";
+  const fileParams: unknown[] = folderId ? [folderId] : [];
 
-  const [{ data: folderRows, error: folderErr }, { data: fileRows, error: fileErr }] =
-    await Promise.all([
-      search ? folderQuery.ilike("name", `%${search.replace(/[%_]/g, "")}%`) : folderQuery,
-      fileQuery,
-    ]);
-  if (folderErr) throw dbError(folderErr.message);
-  if (fileErr) throw dbError(fileErr.message);
+  const [folderRows, fileRows] = await Promise.all([
+    all<FolderRow>(
+      `SELECT * FROM folders WHERE ${parentClause}${search ? " AND name LIKE ?" : ""}`,
+      search ? [...folderParams, likeTerm(search)] : folderParams,
+    ),
+    all<FileRow>(
+      `SELECT * FROM files WHERE ${fileClause} AND status = 'ready'${
+        search ? " AND name LIKE ?" : ""
+      }`,
+      search ? [...fileParams, likeTerm(search)] : fileParams,
+    ),
+  ]);
 
-  const rows = (folderRows ?? []) as FolderRow[];
-  const counts = await countsFor(rows.map((r) => r.id));
+  const counts = await countsFor(folderRows.map((r) => r.id));
   const current = chain.length ? chain[chain.length - 1]! : null;
   const currentCounts = current ? await countsFor([current.id]) : new Map();
 
   const breadcrumbs: BreadcrumbEntry[] = chain.map((f) => ({ id: f.id, name: f.name }));
-  const files = await withPreviews((fileRows ?? []) as FileRow[]);
+  const files = await withPreviews(fileRows);
 
   return {
     folder: current ? toFolder(current, unlocked, currentCounts) : null,
     breadcrumbs,
-    folders: rows
+    folders: folderRows
       .map((r) => toFolder(r, unlocked, counts))
       .sort((a, b) => a.name.localeCompare(b.name)),
     files: sortFiles(files, options.sort ?? "created", options.direction ?? "desc"),
@@ -292,18 +283,13 @@ export async function searchFiles(input: {
   sort?: SortKey;
   direction?: SortDirection;
 }): Promise<VaultFile[]> {
-  const supabase = await db();
-  const term = input.query.trim().replace(/[%_]/g, "");
+  const term = input.query.trim();
   if (!term) return [];
-  const { data, error } = await supabase
-    .from("files")
-    .select("*")
-    .eq("status", "ready")
-    .ilike("name", `%${term}%`)
-    .limit(SEARCH_LIMIT);
-  if (error) throw dbError(error.message);
+  const rows = await all<FileRow>(
+    "SELECT * FROM files WHERE status = 'ready' AND name LIKE ? LIMIT ?",
+    [likeTerm(term), SEARCH_LIMIT],
+  );
 
-  const rows = (data ?? []) as FileRow[];
   const folderIds = Array.from(new Set(rows.map((r) => r.folder_id).filter(Boolean))) as string[];
   const allowed = new Set<string>();
   await Promise.all(
@@ -324,113 +310,104 @@ export async function createFolder(input: {
   pin?: string | null | undefined;
   tokens: string[];
 }): Promise<VaultFolder> {
-  const supabase = await db();
   const name = folderName(input.name);
   await assertAccess(input.parentId, input.tokens);
 
-  let pinFields: Record<string, unknown> = {};
+  let pin: { hash: string; salt: string; iterations: number } | null = null;
   if (input.pin) {
     assertPin(input.pin);
-    const { hash, salt, iterations } = await hashPin(input.pin);
-    pinFields = { pin_hash: hash, pin_salt: salt, pin_iterations: iterations };
+    pin = await hashPin(input.pin);
   }
 
-  const { data, error } = await supabase
-    .from("folders")
-    .insert({ name, parent_id: input.parentId, ...pinFields })
-    .select("*")
-    .single();
-  if (error) throw dbError(error.message);
-  return toFolder(data as FolderRow, new Set(), new Map());
+  const id = newId();
+  const ts = nowIso();
+  await run(
+    `INSERT INTO folders (id, name, parent_id, pin_hash, pin_salt, pin_iterations, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, name, input.parentId, pin?.hash ?? null, pin?.salt ?? null, pin?.iterations ?? null, ts, ts],
+  );
+  return toFolder(await getFolderRow(id), new Set(), new Map());
 }
 
 export async function renameFolder(input: { folderId: string; name: string; tokens: string[] }) {
-  const supabase = await db();
   const name = folderName(input.name);
   await assertAccess(input.folderId, input.tokens);
-  const { error } = await supabase.from("folders").update({ name }).eq("id", input.folderId);
-  if (error) throw dbError(error.message);
+  await run("UPDATE folders SET name = ?, updated_at = ? WHERE id = ?", [
+    name,
+    nowIso(),
+    input.folderId,
+  ]);
   return { ok: true };
 }
 
 /** Collects the folder and every descendant, so storage objects can be purged. */
 async function collectSubtree(folderId: string): Promise<string[]> {
-  const supabase = await db();
-  const all = [folderId];
+  const found = [folderId];
   let frontier = [folderId];
   while (frontier.length) {
-    const { data, error } = await supabase.from("folders").select("id").in("parent_id", frontier);
-    if (error) throw dbError(error.message);
-    frontier = (data ?? []).map((r) => r.id as string);
-    all.push(...frontier);
+    const rows = await all<{ id: string }>(
+      `SELECT id FROM folders WHERE parent_id IN (${placeholders(frontier.length)})`,
+      frontier,
+    );
+    frontier = rows.map((r) => r.id);
+    found.push(...frontier);
   }
-  return all;
+  return found;
 }
 
 export async function deleteFolder(input: { folderId: string; tokens: string[] }) {
-  const supabase = await db();
   await assertAccess(input.folderId, input.tokens);
   const ids = await collectSubtree(input.folderId);
-  const { data: files, error } = await supabase
-    .from("files")
-    .select("storage_key")
-    .in("folder_id", ids);
-  if (error) throw dbError(error.message);
-  const keys = (files ?? []).map((f) => f.storage_key as string);
+  const files = await all<{ storage_key: string }>(
+    `SELECT storage_key FROM files WHERE folder_id IN (${placeholders(ids.length)})`,
+    ids,
+  );
+  const keys = files.map((f) => f.storage_key);
   if (keys.length) await getStorageService().remove(keys);
-  const { error: delErr } = await supabase.from("folders").delete().eq("id", input.folderId);
-  if (delErr) throw dbError(delErr.message);
+  // ON DELETE CASCADE removes descendants, their files and unlock sessions.
+  await run("DELETE FROM folders WHERE id = ?", [input.folderId]);
   return { ok: true };
 }
 
 /* --------------------------------- PINs --------------------------------- */
 
 export async function setFolderPin(input: { folderId: string; pin: string; tokens: string[] }) {
-  const supabase = await db();
   assertPin(input.pin);
   const row = await getFolderRow(input.folderId);
   // Changing an existing PIN requires the folder to be unlocked first.
   if (row.pin_hash) await assertAccess(input.folderId, input.tokens);
   const { hash, salt, iterations } = await hashPin(input.pin);
-  const { error } = await supabase
-    .from("folders")
-    .update({ pin_hash: hash, pin_salt: salt, pin_iterations: iterations })
-    .eq("id", input.folderId);
-  if (error) throw dbError(error.message);
+  await run(
+    "UPDATE folders SET pin_hash = ?, pin_salt = ?, pin_iterations = ?, updated_at = ? WHERE id = ?",
+    [hash, salt, iterations, nowIso(), input.folderId],
+  );
   await revokeSessions(input.folderId);
   return { ok: true };
 }
 
 export async function removeFolderPin(input: { folderId: string; tokens: string[] }) {
-  const supabase = await db();
   await assertAccess(input.folderId, input.tokens);
-  const { error } = await supabase
-    .from("folders")
-    .update({ pin_hash: null, pin_salt: null, pin_iterations: null })
-    .eq("id", input.folderId);
-  if (error) throw dbError(error.message);
+  await run(
+    "UPDATE folders SET pin_hash = NULL, pin_salt = NULL, pin_iterations = NULL, updated_at = ? WHERE id = ?",
+    [nowIso(), input.folderId],
+  );
   await revokeSessions(input.folderId);
   return { ok: true };
 }
 
 async function revokeSessions(folderId: string) {
-  const supabase = await db();
-  await supabase.from("folder_unlock_sessions").delete().eq("folder_id", folderId);
+  await run("DELETE FROM folder_unlock_sessions WHERE folder_id = ?", [folderId]);
 }
 
 /** Throttles brute force without revealing whether the folder is protected. */
 async function assertUnlockAllowed(folderId: string, clientKey: string) {
-  const supabase = await db();
   const since = new Date(Date.now() - UNLOCK_WINDOW_MINUTES * 60_000).toISOString();
-  const { count, error } = await supabase
-    .from("folder_unlock_attempts")
-    .select("id", { count: "exact", head: true })
-    .eq("folder_id", folderId)
-    .eq("client_key", clientKey)
-    .eq("succeeded", false)
-    .gt("created_at", since);
-  if (error) throw dbError(error.message);
-  if ((count ?? 0) >= UNLOCK_MAX_FAILURES) {
+  const row = await get<{ failures: number }>(
+    `SELECT COUNT(*) AS failures FROM folder_unlock_attempts
+      WHERE folder_id = ? AND client_key = ? AND succeeded = 0 AND created_at > ?`,
+    [folderId, clientKey, since],
+  );
+  if ((row?.failures ?? 0) >= UNLOCK_MAX_FAILURES) {
     throw new VaultError(
       "RATE_LIMITED",
       `Too many attempts. Try again in ${UNLOCK_WINDOW_MINUTES} minutes.`,
@@ -440,10 +417,11 @@ async function assertUnlockAllowed(folderId: string, clientKey: string) {
 }
 
 async function recordAttempt(folderId: string, clientKey: string, succeeded: boolean) {
-  const supabase = await db();
-  await supabase
-    .from("folder_unlock_attempts")
-    .insert({ folder_id: folderId, client_key: clientKey, succeeded });
+  await run(
+    `INSERT INTO folder_unlock_attempts (id, folder_id, client_key, succeeded, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [newId(), folderId, clientKey, succeeded ? 1 : 0, nowIso()],
+  );
 }
 
 export async function unlockFolder(input: {
@@ -451,7 +429,6 @@ export async function unlockFolder(input: {
   pin: string;
   clientKey?: string;
 }): Promise<{ token: string | null; expiresAt: string | null }> {
-  const supabase = await db();
   const clientKey = input.clientKey || "unknown";
   const row = await getFolderRow(input.folderId);
   if (!row.pin_hash || !row.pin_salt || !row.pin_iterations) {
@@ -460,12 +437,10 @@ export async function unlockFolder(input: {
   await assertUnlockAllowed(input.folderId, clientKey);
 
   // Clear expired sessions and stale attempt records opportunistically.
-  const now = new Date().toISOString();
-  await supabase.from("folder_unlock_sessions").delete().lt("expires_at", now);
-  await supabase
-    .from("folder_unlock_attempts")
-    .delete()
-    .lt("created_at", new Date(Date.now() - 24 * 3600_000).toISOString());
+  await run("DELETE FROM folder_unlock_sessions WHERE expires_at < ?", [nowIso()]);
+  await run("DELETE FROM folder_unlock_attempts WHERE created_at < ?", [
+    new Date(Date.now() - 24 * 3600_000).toISOString(),
+  ]);
 
   const ok = await verifyPin(input.pin, {
     hash: row.pin_hash,
@@ -477,12 +452,11 @@ export async function unlockFolder(input: {
 
   const token = randomHex(32);
   const expiresAt = new Date(Date.now() + UNLOCK_TTL_MINUTES * 60_000).toISOString();
-  const { error } = await supabase.from("folder_unlock_sessions").insert({
-    folder_id: input.folderId,
-    token_hash: await hashToken(token),
-    expires_at: expiresAt,
-  });
-  if (error) throw dbError(error.message);
+  await run(
+    `INSERT INTO folder_unlock_sessions (id, folder_id, token_hash, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [newId(), input.folderId, await hashToken(token), expiresAt, nowIso()],
+  );
   return { token, expiresAt };
 }
 
@@ -500,7 +474,6 @@ export async function createUpload(input: {
   mimeType: string;
   tokens: string[];
 }): Promise<UploadTarget> {
-  const supabase = await db();
   const name = sanitizeFileName(input.name);
   await assertAccess(input.folderId, input.tokens);
 
@@ -508,63 +481,55 @@ export async function createUpload(input: {
   // structurally impossible whichever backend stores the bytes.
   const storageKey = `${input.folderId ?? "root"}/${randomHex(16)}`;
   const mimeType = (input.mimeType || "application/octet-stream").slice(0, 255);
-  const { data, error } = await supabase
-    .from("files")
-    .insert({
-      folder_id: input.folderId,
+  const id = newId();
+  const ts = nowIso();
+  await run(
+    `INSERT INTO files (id, folder_id, name, original_name, size, mime_type, storage_key, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'uploading', ?, ?)`,
+    [
+      id,
+      input.folderId,
       name,
-      original_name: name,
-      size: Math.max(0, Math.floor(input.size)),
-      mime_type: mimeType,
-      storage_key: storageKey,
-      status: "uploading",
-    })
-    .select("id")
-    .single();
-  if (error) throw dbError(error.message);
+      name,
+      Math.max(0, Math.floor(input.size)),
+      mimeType,
+      storageKey,
+      ts,
+      ts,
+    ],
+  );
 
   const ticket = await getStorageService().createUploadTicket(storageKey, mimeType);
-  return { fileId: data.id as string, ...ticket };
+  return { fileId: id, ...ticket };
 }
 
 export async function completeUpload(input: { fileId: string; size: number; tokens: string[] }) {
-  const supabase = await db();
-  const { data, error } = await supabase
-    .from("files")
-    .select("*")
-    .eq("id", input.fileId)
-    .maybeSingle();
-  if (error) throw dbError(error.message);
-  if (!data) throw notFound("file");
-  const row = data as FileRow;
+  const row = await get<FileRow>("SELECT * FROM files WHERE id = ?", [input.fileId]);
+  if (!row) throw notFound("file");
   await assertAccess(row.folder_id, input.tokens);
-  const { error: upErr } = await supabase
-    .from("files")
-    .update({ status: "ready", size: Math.max(0, Math.floor(input.size)) })
-    .eq("id", input.fileId);
-  if (upErr) throw dbError(upErr.message);
-  return toFile({ ...row, status: "ready", size: input.size });
+  const size = Math.max(0, Math.floor(input.size));
+  await run("UPDATE files SET status = 'ready', size = ?, updated_at = ? WHERE id = ?", [
+    size,
+    nowIso(),
+    input.fileId,
+  ]);
+  return toFile({ ...row, status: "ready", size });
 }
 
 /** Removes the database row and object for an upload that never finished. */
 export async function abandonUpload(input: { fileId: string; tokens: string[] }) {
-  const supabase = await db();
-  const { data } = await supabase.from("files").select("*").eq("id", input.fileId).maybeSingle();
-  if (!data) return { ok: true };
-  const row = data as FileRow;
+  const row = await get<FileRow>("SELECT * FROM files WHERE id = ?", [input.fileId]);
+  if (!row) return { ok: true };
   if (row.status === "ready") return { ok: true };
   await assertAccess(row.folder_id, input.tokens);
   await getStorageService().remove([row.storage_key]);
-  await supabase.from("files").delete().eq("id", input.fileId);
+  await run("DELETE FROM files WHERE id = ?", [input.fileId]);
   return { ok: true };
 }
 
 async function getFileRow(fileId: string, tokens: string[]): Promise<FileRow> {
-  const supabase = await db();
-  const { data, error } = await supabase.from("files").select("*").eq("id", fileId).maybeSingle();
-  if (error) throw dbError(error.message);
-  if (!data) throw notFound("file");
-  const row = data as FileRow;
+  const row = await get<FileRow>("SELECT * FROM files WHERE id = ?", [fileId]);
+  if (!row) throw notFound("file");
   await assertAccess(row.folder_id, tokens);
   return row;
 }
@@ -576,12 +541,14 @@ export async function getDownloadUrl(input: { fileId: string; tokens: string[] }
 }
 
 export async function renameFile(input: { fileId: string; name: string; tokens: string[] }) {
-  const supabase = await db();
   if (!String(input.name ?? "").trim()) throw invalid("Please enter a name.");
   const name = sanitizeFileName(input.name);
   await getFileRow(input.fileId, input.tokens);
-  const { error } = await supabase.from("files").update({ name }).eq("id", input.fileId);
-  if (error) throw dbError(error.message);
+  await run("UPDATE files SET name = ?, updated_at = ? WHERE id = ?", [
+    name,
+    nowIso(),
+    input.fileId,
+  ]);
   return { ok: true, name };
 }
 
@@ -591,32 +558,26 @@ export async function moveFile(input: {
   folderId: string | null;
   tokens: string[];
 }) {
-  const supabase = await db();
   await getFileRow(input.fileId, input.tokens);
   await assertAccess(input.folderId, input.tokens);
-  const { error } = await supabase
-    .from("files")
-    .update({ folder_id: input.folderId })
-    .eq("id", input.fileId);
-  if (error) throw dbError(error.message);
+  await run("UPDATE files SET folder_id = ?, updated_at = ? WHERE id = ?", [
+    input.folderId,
+    nowIso(),
+    input.fileId,
+  ]);
   return { ok: true };
 }
 
 export async function deleteFile(input: { fileId: string; tokens: string[] }) {
-  const supabase = await db();
   const row = await getFileRow(input.fileId, input.tokens);
   await getStorageService().remove([row.storage_key]);
-  const { error } = await supabase.from("files").delete().eq("id", input.fileId);
-  if (error) throw dbError(error.message);
+  await run("DELETE FROM files WHERE id = ?", [input.fileId]);
   return { ok: true };
 }
 
 /** Folders the caller may move a file into (locked subtrees are omitted). */
 export async function listAccessibleFolders(tokens: string[]): Promise<BreadcrumbEntry[]> {
-  const supabase = await db();
-  const { data, error } = await supabase.from("folders").select("*").order("name");
-  if (error) throw dbError(error.message);
-  const rows = (data ?? []) as FolderRow[];
+  const rows = await all<FolderRow>("SELECT * FROM folders ORDER BY name");
   const byId = new Map(rows.map((r) => [r.id, r]));
   const unlocked = await validTokenFolderIds(tokens);
 
@@ -643,18 +604,15 @@ export async function listAccessibleFolders(tokens: string[]): Promise<Breadcrum
 }
 
 export async function getVaultStats(tokens: string[]): Promise<VaultStats> {
-  const supabase = await db();
   const unlocked = await validTokenFolderIds(tokens);
-  const [{ count: fileCount }, { count: folderCount }, { data: sizes }] = await Promise.all([
-    supabase.from("files").select("id", { count: "exact", head: true }).eq("status", "ready"),
-    supabase.from("folders").select("id", { count: "exact", head: true }),
-    supabase.from("files").select("size").eq("status", "ready"),
-  ]);
-  const totalSize = (sizes ?? []).reduce((sum, r) => sum + Number(r.size ?? 0), 0);
+  const files = await get<{ count: number; total: number | null }>(
+    "SELECT COUNT(*) AS count, SUM(size) AS total FROM files WHERE status = 'ready'",
+  );
+  const folders = await get<{ count: number }>("SELECT COUNT(*) AS count FROM folders");
   return {
-    fileCount: fileCount ?? 0,
-    folderCount: folderCount ?? 0,
-    totalSize,
+    fileCount: files?.count ?? 0,
+    folderCount: folders?.count ?? 0,
+    totalSize: Number(files?.total ?? 0),
     unlockedCount: unlocked.size,
   };
 }
