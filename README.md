@@ -25,12 +25,16 @@ The app is then on http://localhost:8080. On first start it creates
 `./.vault-data/` containing `vault.db` and a `blobs/` directory. Nothing else
 is required — there are **no** Supabase or other cloud credentials.
 
-Production build and serve:
+Production build and serve (self-hosted Node.js — Windows, Linux, Termux):
 
 ```sh
-npm run build
-npm start
+npm run build:node   # builds a plain Node server into dist/
+npm start            # node dist/server/index.mjs
 ```
+
+`npm run build` is the hosted/edge build and is **not** usable for self-hosting:
+the vault server uses `node:sqlite` and the local filesystem, which only exist
+on a Node runtime. Always use `build:node` on your own machine or the phone.
 
 ## Configuration
 
