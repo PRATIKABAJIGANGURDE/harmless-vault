@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, Loader2, X } from "lucide-react";
+import { CheckCircle2, CircleAlert, Loader2, RotateCcw, X } from "lucide-react";
 
 import { cn, formatBytes } from "@/lib/utils";
 
@@ -9,15 +9,18 @@ export interface QueueItem {
   progress: number;
   status: "uploading" | "done" | "error";
   error?: string;
-  abort?: () => void;
 }
 
 export function UploadQueue({
   items,
+  onCancel,
+  onRetry,
   onDismiss,
   onClear,
 }: {
   items: QueueItem[];
+  onCancel: (id: string) => void;
+  onRetry: (id: string) => void;
   onDismiss: (id: string) => void;
   onClear: () => void;
 }) {
@@ -50,15 +53,29 @@ export function UploadQueue({
                 <CircleAlert className="size-4 shrink-0 text-destructive" />
               )}
               <span className="min-w-0 flex-1 truncate text-xs">{item.name}</span>
-              <span className="text-[11px] text-muted-foreground">{formatBytes(item.size)}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {item.status === "uploading" ? `${item.progress}%` : formatBytes(item.size)}
+              </span>
+              {item.status === "error" ? (
+                <button
+                  type="button"
+                  onClick={() => onRetry(item.id)}
+                  className="text-muted-foreground transition-colors hover:text-primary"
+                  aria-label={`Retry ${item.name}`}
+                >
+                  <RotateCcw className="size-3.5" />
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => {
-                  item.abort?.();
-                  onDismiss(item.id);
+                  if (item.status === "uploading") onCancel(item.id);
+                  else onDismiss(item.id);
                 }}
                 className="text-muted-foreground transition-colors hover:text-foreground"
-                aria-label={`Dismiss ${item.name}`}
+                aria-label={
+                  item.status === "uploading" ? `Cancel ${item.name}` : `Dismiss ${item.name}`
+                }
               >
                 <X className="size-3.5" />
               </button>

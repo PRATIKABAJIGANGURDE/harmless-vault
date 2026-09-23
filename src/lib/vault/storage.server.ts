@@ -19,6 +19,8 @@ export interface StorageService {
   createUploadTicket(key: string, mimeType: string): Promise<UploadTicket>;
   /** A short-lived, read-only URL the browser can stream a file body from. */
   createDownloadUrl(key: string, fileName: string): Promise<string>;
+  /** A short-lived inline URL, used for image thumbnails. */
+  createPreviewUrl(key: string, ttlSeconds: number): Promise<string>;
   /** Removes objects. Missing objects are not an error. */
   remove(keys: string[]): Promise<void>;
 }
@@ -50,6 +52,13 @@ class SupabaseStorageService implements StorageService {
     const storage = await this.client();
     const { data, error } = await storage.createSignedUrl(key, 300, { download: fileName });
     if (error || !data) throw new Error(error?.message ?? "Could not prepare the download.");
+    return data.signedUrl;
+  }
+
+  async createPreviewUrl(key: string, ttlSeconds: number): Promise<string> {
+    const storage = await this.client();
+    const { data, error } = await storage.createSignedUrl(key, ttlSeconds);
+    if (error || !data) throw new Error(error?.message ?? "Could not prepare the preview.");
     return data.signedUrl;
   }
 

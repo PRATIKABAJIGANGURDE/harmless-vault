@@ -21,6 +21,7 @@ export type Database = {
           id: string
           mime_type: string
           name: string
+          original_name: string
           size: number
           status: string
           storage_key: string
@@ -32,6 +33,7 @@ export type Database = {
           id?: string
           mime_type?: string
           name: string
+          original_name?: string
           size?: number
           status?: string
           storage_key: string
@@ -43,6 +45,7 @@ export type Database = {
           id?: string
           mime_type?: string
           name?: string
+          original_name?: string
           size?: number
           status?: string
           storage_key?: string
@@ -51,6 +54,38 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "files_folder_id_fkey"
+            columns: ["folder_id"]
+            isOneToOne: false
+            referencedRelation: "folders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      folder_unlock_attempts: {
+        Row: {
+          client_key: string
+          created_at: string
+          folder_id: string
+          id: string
+          succeeded: boolean
+        }
+        Insert: {
+          client_key: string
+          created_at?: string
+          folder_id: string
+          id?: string
+          succeeded?: boolean
+        }
+        Update: {
+          client_key?: string
+          created_at?: string
+          folder_id?: string
+          id?: string
+          succeeded?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "folder_unlock_attempts_folder_id_fkey"
             columns: ["folder_id"]
             isOneToOne: false
             referencedRelation: "folders"

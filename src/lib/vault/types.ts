@@ -20,10 +20,25 @@ export interface VaultFile {
   id: string;
   folderId: string | null;
   name: string;
+  originalName: string;
   size: number;
   mimeType: string;
+  kind: FileKind;
+  previewUrl: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type FileKind = "image" | "video" | "audio" | "pdf" | "archive" | "document" | "other";
+
+export function fileKind(mime: string): FileKind {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime === "application/pdf") return "pdf";
+  if (/zip|compressed|tar|rar|7z/.test(mime)) return "archive";
+  if (/word|excel|powerpoint|opendocument|text\//.test(mime)) return "document";
+  return "other";
 }
 
 export interface BreadcrumbEntry {
@@ -38,6 +53,16 @@ export interface FolderView {
   files: VaultFile[];
 }
 
+export interface VaultStats {
+  fileCount: number;
+  folderCount: number;
+  totalSize: number;
+  unlockedCount: number;
+}
+
+export type SortKey = "name" | "size" | "created";
+export type SortDirection = "asc" | "desc";
+
 export interface UploadTarget {
   fileId: string;
   url: string;
@@ -47,21 +72,47 @@ export interface UploadTarget {
 
 export const VAULT_LOCKED_CODE = "FOLDER_LOCKED";
 
-export class VaultLockedError extends Error {
-  code = VAULT_LOCKED_CODE;
-  folderId: string;
+export type VaultErrorCode =
+  | "FOLDER_LOCKED"
+  | "INVALID_PIN"
+  | "NOT_FOUND"
+  | "VALIDATION"
+  | "RATE_LIMITED"
+  | "CONFLICT"
+  | "SERVER_ERROR";
+
+/** Transport-agnostic error: the REST layer maps `status`, the UI reads `code`. */
+export class VaultError extends Error {
+  code: VaultErrorCode;
+  status: number;
+  folderId?: string;
+
+  constructor(code: VaultErrorCode, message: string, status: number, folderId?: string) {
+    super(message);
+    this.name = "VaultError";
+    this.code = code;
+    this.status = status;
+    if (folderId) this.folderId = folderId;
+  }
+}
+
+export class VaultLockedError extends VaultError {
   constructor(folderId: string) {
-    super("This folder is locked. Enter its PIN to continue.");
-    this.folderId = folderId;
+    super(
+      VAULT_LOCKED_CODE,
+      "This folder is locked. Enter its PIN to continue.",
+      423,
+      folderId,
+    );
   }
 }
 
 export function isLockedError(error: unknown): boolean {
+  if (error instanceof VaultError) return error.code === VAULT_LOCKED_CODE;
   return (
     typeof error === "object" &&
     error !== null &&
-    "message" in error &&
-    typeof (error as { message: unknown }).message === "string" &&
-    (error as { message: string }).message.includes(VAULT_LOCKED_CODE)
+    "code" in error &&
+    (error as { code: unknown }).code === VAULT_LOCKED_CODE
   );
 }

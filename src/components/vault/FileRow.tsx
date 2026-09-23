@@ -4,11 +4,14 @@ import {
   FileAudio,
   FileImage,
   FileText,
+  FileType2,
   FileVideo,
+  FolderInput,
   MoreVertical,
   PencilLine,
   Trash2,
 } from "lucide-react";
+import { useState } from "react";
 
 import {
   DropdownMenu,
@@ -17,15 +20,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatBytes } from "@/lib/utils";
-import type { VaultFile } from "@/lib/vault/types";
+import type { FileKind, VaultFile } from "@/lib/vault/types";
 
-function iconFor(mime: string) {
-  if (mime.startsWith("image/")) return FileImage;
-  if (mime.startsWith("video/")) return FileVideo;
-  if (mime.startsWith("audio/")) return FileAudio;
-  if (mime.includes("zip") || mime.includes("compressed")) return FileArchive;
-  return FileText;
-}
+const ICONS: Record<FileKind, typeof FileText> = {
+  image: FileImage,
+  video: FileVideo,
+  audio: FileAudio,
+  pdf: FileType2,
+  archive: FileArchive,
+  document: FileText,
+  other: FileText,
+};
 
 interface FileRowProps {
   file: VaultFile;
@@ -33,23 +38,45 @@ interface FileRowProps {
   busy?: boolean;
   onDownload: (file: VaultFile) => void;
   onRename: (file: VaultFile) => void;
+  onMove: (file: VaultFile) => void;
   onDelete: (file: VaultFile) => void;
 }
 
-export function FileRow({ file, index, busy, onDownload, onRename, onDelete }: FileRowProps) {
-  const Icon = iconFor(file.mimeType);
+export function FileRow({
+  file,
+  index,
+  busy,
+  onDownload,
+  onRename,
+  onMove,
+  onDelete,
+}: FileRowProps) {
+  const Icon = ICONS[file.kind] ?? FileText;
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const showThumb = file.kind === "image" && file.previewUrl && !thumbFailed;
+
   return (
     <div
       className="animate-rise group flex items-center gap-4 rounded-xl border border-border/60 bg-surface/50 px-4 py-3 transition-colors hover:border-primary/40 hover:bg-surface"
       style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
     >
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary/60 text-muted-foreground group-hover:text-primary">
-        <Icon className="size-5" />
-      </span>
+      {showThumb ? (
+        <img
+          src={file.previewUrl ?? ""}
+          alt=""
+          loading="lazy"
+          onError={() => setThumbFailed(true)}
+          className="size-10 shrink-0 rounded-lg object-cover"
+        />
+      ) : (
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary/60 text-muted-foreground group-hover:text-primary">
+          <Icon className="size-5" />
+        </span>
+      )}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{file.name}</p>
         <p className="text-xs text-muted-foreground">
-          {formatBytes(file.size)} · {new Date(file.createdAt).toLocaleString()}
+          {formatBytes(file.size)} · {new Date(file.updatedAt).toLocaleString()}
         </p>
       </div>
       <button
@@ -71,6 +98,9 @@ export function FileRow({ file, index, busy, onDownload, onRename, onDelete }: F
         <DropdownMenuContent align="end">
           <DropdownMenuItem onClick={() => onRename(file)}>
             <PencilLine className="mr-2 size-4" /> Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onMove(file)}>
+            <FolderInput className="mr-2 size-4" /> Move to…
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => onDelete(file)}
