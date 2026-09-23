@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import {
+  ArrowUpDown,
   ChevronRight,
   FolderPlus,
   HardDrive,
@@ -7,6 +8,7 @@ import {
   Loader2,
   Lock,
   RefreshCw,
+  Search,
   ShieldCheck,
   UploadCloud,
 } from "lucide-react";
@@ -16,7 +18,7 @@ import { toast } from "sonner";
 import { FileRow } from "@/components/vault/FileRow";
 import { FolderCard } from "@/components/vault/FolderCard";
 import { PinPad } from "@/components/vault/PinPad";
-import { UploadQueue, type QueueItem } from "@/components/vault/UploadQueue";
+import { UploadQueue } from "@/components/vault/UploadQueue";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
