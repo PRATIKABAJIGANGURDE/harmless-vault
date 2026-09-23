@@ -91,7 +91,7 @@ are the complete vault.
 ```sh
 npx vitest run            # filename / PIN sanitisation unit tests
 npm run dev               # in one terminal, then:
-npx tsx scripts/api-e2e.ts    # full API flow against the running server
+node --experimental-strip-types scripts/api-e2e.ts   # full API flow
 ```
 
 The end-to-end script covers folders, nesting, PIN lock/unlock, upload,
