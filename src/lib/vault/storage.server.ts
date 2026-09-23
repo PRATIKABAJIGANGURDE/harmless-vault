@@ -35,13 +35,10 @@ class SupabaseStorageService implements StorageService {
     const storage = await this.client();
     const { data, error } = await storage.createSignedUploadUrl(key, { upsert: true });
     if (error || !data) throw new Error(error?.message ?? "Could not start the upload.");
-    const baseUrl = process.env["SUPABASE_URL"]!;
     return {
-      url: `${baseUrl}/storage/v1${data.signedUrl.replace(/^\/storage\/v1/, "")}`.replace(
-        `${baseUrl}/storage/v1${baseUrl}`,
-        baseUrl,
-      ),
+      url: data.signedUrl,
       method: "PUT",
+
       headers: {
         "x-upsert": "true",
         ...(mimeType ? { "content-type": mimeType } : {}),
