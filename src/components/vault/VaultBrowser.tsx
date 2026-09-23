@@ -102,8 +102,13 @@ export function VaultBrowser({ folderId }: { folderId: string | null }) {
         { folderId: pinMode.folderId, pin },
         {
           onSuccess: () => {
+            const target = pinMode.folder?.id;
             setPinMode(null);
             toast.success("Folder unlocked");
+            // Unlocking from a folder card takes you straight inside.
+            if (target && target !== folderId) {
+              navigate({ to: "/f/$folderId", params: { folderId: target } });
+            }
           },
           onError: (error: Error) => setPinError(error.message),
         },
