@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "build:node": "cross-env-shell VAULT_BUILD_TARGET=node vite build",
+    "build:node": "node scripts/build-node.mjs",
     "start": "node dist/server/index.mjs",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
