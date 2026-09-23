@@ -1,6 +1,7 @@
 // Folder operations. Thin, typed wrappers over the REST contract in docs/API.md.
 
 import { api } from "@/services/client";
+import { withResolvedPreview } from "@/services/files";
 import { unlockStore } from "@/services/session";
 import type {
   BreadcrumbEntry,
@@ -13,15 +14,16 @@ import type {
 
 const segment = (folderId: string | null) => folderId ?? "root";
 
-export function getFolderView(
+export async function getFolderView(
   folderId: string | null,
   options: { search?: string; sort?: SortKey; direction?: SortDirection } = {},
 ): Promise<FolderView> {
-  return api.get<FolderView>(`/api/folders/${segment(folderId)}/files`, {
+  const view = await api.get<FolderView>(`/api/folders/${segment(folderId)}/files`, {
     search: options.search ?? "",
     sort: options.sort ?? "created",
     direction: options.direction ?? "desc",
   });
+  return { ...view, files: view.files.map(withResolvedPreview) };
 }
 
 export function getStats(): Promise<VaultStats> {

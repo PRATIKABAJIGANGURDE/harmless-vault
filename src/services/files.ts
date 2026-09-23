@@ -3,6 +3,11 @@
 import { api } from "@/services/client";
 import type { SortDirection, SortKey, UploadTarget, VaultFile } from "@/lib/vault/types";
 
+/** Storage links arrive relative; point them at the configured API backend. */
+export function withResolvedPreview(file: VaultFile): VaultFile {
+  return { ...file, previewUrl: api.resolve(file.previewUrl) };
+}
+
 export function searchFiles(
   query: string,
   options: { sort?: SortKey; direction?: SortDirection } = {},
@@ -13,16 +18,17 @@ export function searchFiles(
       sort: options.sort ?? "created",
       direction: options.direction ?? "desc",
     })
-    .then((r) => r.files);
+    .then((r) => r.files.map(withResolvedPreview));
 }
 
-export function requestUpload(input: {
+export async function requestUpload(input: {
   folderId: string | null;
   name: string;
   size: number;
   mimeType: string;
 }): Promise<UploadTarget> {
-  return api.post<UploadTarget>("/api/files/upload", input);
+  const ticket = await api.post<UploadTarget>("/api/files/upload", input);
+  return { ...ticket, url: api.resolve(ticket.url) ?? ticket.url };
 }
 
 export function completeUpload(fileId: string, size: number) {
@@ -33,10 +39,11 @@ export function discardUpload(fileId: string) {
   return api.delete<{ ok: true }>(`/api/files/${fileId}/complete`);
 }
 
-export function getDownload(fileId: string) {
-  return api.get<{ url: string; name: string; size: number; mimeType: string }>(
+export async function getDownload(fileId: string) {
+  const result = await api.get<{ url: string; name: string; size: number; mimeType: string }>(
     `/api/files/${fileId}/download`,
   );
+  return { ...result, url: api.resolve(result.url) ?? result.url };
 }
 
 export function renameFile(fileId: string, name: string) {
