@@ -217,7 +217,7 @@ export async function getFolderView(
 export async function createFolder(input: {
   name: string;
   parentId: string | null;
-  pin?: string | null;
+  pin?: string | null | undefined;
   tokens: string[];
 }): Promise<VaultFolder> {
   const supabase = await db();
