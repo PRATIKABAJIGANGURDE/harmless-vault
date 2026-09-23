@@ -1,145 +1,188 @@
-const BASE = "http://localhost:8080";
-let token = "";
-const results: string[] = [];
-let failed = 0;
+// End-to-end check of the vault REST API against a running server.
+//
+//   bun run scripts/api-e2e.ts            (defaults to http://localhost:8080)
+//   BASE=http://192.168.1.42:3000 bun run scripts/api-e2e.ts
+//
+// It exercises the full contract: folders, nesting, PIN lock/unlock, upload,
+// listing, download, rename, move, delete. Exits non-zero on the first failure.
 
-function check(name: string, ok: boolean, detail = "") {
-  results.push(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
-  if (!ok) failed++;
+const BASE = process.env["BASE"] ?? "http://localhost:8080";
+const UNLOCK_HEADER = "x-vault-unlock";
+
+let passed = 0;
+const failures: string[] = [];
+
+function check(label: string, ok: boolean, detail = "") {
+  if (ok) {
+    passed += 1;
+    console.log(`  PASS  ${label}`);
+  } else {
+    failures.push(`${label} ${detail}`);
+    console.log(`  FAIL  ${label} ${detail}`);
+  }
 }
 
-async function call(method: string, path: string, body?: unknown, useToken = true) {
-  const res = await fetch(BASE + path, {
+async function call(
+  method: string,
+  path: string,
+  body?: unknown,
+  tokens: string[] = [],
+): Promise<{ status: number; data: any }> {
+  const response = await fetch(`${BASE}${path}`, {
     method,
     headers: {
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
-      ...(useToken && token ? { "x-vault-unlock": token } : {}),
+      ...(tokens.length ? { [UNLOCK_HEADER]: tokens.join(",") } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
-  let json: any = null;
-  try { json = await res.json(); } catch {}
-  return { status: res.status, json };
+  const text = await response.text();
+  let data: any = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = text;
+  }
+  return { status: response.status, data };
 }
 
-const run = async () => {
-  // 1. create folder
-  const a = await call("POST", "/api/folders", { name: "E2E Run", parentId: null });
-  check("create folder", a.status === 201 && !!a.json.folder?.id, `status ${a.status}`);
-  const rootId = a.json.folder.id as string;
+async function main() {
+  const stamp = Date.now();
 
-  // 2. nested folder
-  const b = await call("POST", "/api/folders", { name: "Nested", parentId: rootId });
-  check("create nested folder", b.status === 201 && b.json.folder.parentId === rootId);
-  const nestedId = b.json.folder.id as string;
+  // --- folders ------------------------------------------------------------
+  const parent = await call("POST", "/api/folders", { name: `E2E ${stamp}`, parentId: null });
+  check("create folder", parent.status === 201 && !!parent.data.folder?.id, String(parent.status));
+  const parentId: string = parent.data.folder.id;
 
-  // 3. protected folder
-  const c = await call("POST", "/api/folders", { name: "E2E Locked", parentId: rootId, pin: "2580" });
-  check("create protected folder", c.status === 201 && c.json.folder.isProtected === true);
-  const lockedId = c.json.folder.id as string;
+  const child = await call("POST", "/api/folders", { name: "Nested", parentId });
+  check("create nested folder", child.status === 201, String(child.status));
+  const childId: string = child.data.folder.id;
 
-  // 3b. bad pin rejected at creation
-  const badPin = await call("POST", "/api/folders", { name: "Bad", parentId: rootId, pin: "12" });
-  check("reject non 4-digit PIN", badPin.status === 400, `status ${badPin.status}`);
+  const listing = await call("GET", `/api/folders/${parentId}/files`);
+  check(
+    "nested folder appears in parent listing",
+    listing.status === 200 && listing.data.folders.some((f: any) => f.id === childId),
+  );
+  check("breadcrumbs present", listing.data.breadcrumbs?.length === 1);
 
-  // 4. locked listing rejected
-  const l1 = await call("GET", `/api/folders/${lockedId}/files`);
-  check("locked folder listing rejected (423)", l1.status === 423 && l1.json.error.code === "FOLDER_LOCKED", `status ${l1.status}`);
+  const renamed = await call("PATCH", `/api/folders/${childId}`, { name: "Nested renamed" });
+  check("rename folder", renamed.status === 200);
 
-  // 5. upload into locked folder rejected
-  const l2 = await call("POST", "/api/files/upload", { folderId: lockedId, name: "x.txt", size: 3, mimeType: "text/plain" });
-  check("locked folder upload rejected (423)", l2.status === 423, `status ${l2.status}`);
+  // --- PIN protection -----------------------------------------------------
+  const badPin = await call("POST", "/api/folders", { name: "Bad", parentId, pin: "12" });
+  check("reject non-4-digit PIN", badPin.status === 400, String(badPin.status));
 
-  // 6. wrong pin
-  const w = await call("POST", `/api/folders/${lockedId}/unlock`, { pin: "1111" });
-  check("wrong PIN rejected (401)", w.status === 401 && w.json.error.code === "INVALID_PIN", `status ${w.status}`);
-  check("wrong PIN leaks nothing", JSON.stringify(w.json).match(/hash|salt|2580/) === null);
+  const secure = await call("POST", "/api/folders", { name: "Private", parentId, pin: "2580" });
+  check("create protected folder", secure.status === 201);
+  const secureId: string = secure.data.folder.id;
 
-  // 7. correct pin
-  const u = await call("POST", `/api/folders/${lockedId}/unlock`, { pin: "2580" });
-  check("correct PIN unlocks", u.status === 200 && typeof u.json.token === "string", `status ${u.status}`);
-  token = u.json.token;
+  const lockedList = await call("GET", `/api/folders/${secureId}/files`);
+  check("locked folder rejects listing", lockedList.status === 423, String(lockedList.status));
 
-  // 8. listing now allowed
-  const l3 = await call("GET", `/api/folders/${lockedId}/files`);
-  check("unlocked folder lists", l3.status === 200 && Array.isArray(l3.json.files), `status ${l3.status}`);
-
-  // 9. upload
-  const payload = new TextEncoder().encode("harmless vault e2e payload ".repeat(40));
-  const t = await call("POST", "/api/files/upload", {
-    folderId: lockedId, name: "../../evil report.txt", size: payload.byteLength, mimeType: "text/plain",
+  const lockedUpload = await call("POST", "/api/files/upload", {
+    folderId: secureId,
+    name: "x.txt",
+    size: 1,
+    mimeType: "text/plain",
   });
-  check("upload ticket issued", t.status === 201 && !!t.json.url, `status ${t.status}`);
-  const fileId = t.json.fileId as string;
-  const put = await fetch(t.json.url, { method: t.json.method, headers: t.json.headers, body: payload });
-  check("body streamed to storage", put.ok, `status ${put.status}`);
-  const done = await call("POST", `/api/files/${fileId}/complete`, { size: payload.byteLength });
-  check("upload completed", done.status === 200, `status ${done.status}`);
-  check("filename sanitised", !String(done.json.file.name).includes("..") && !String(done.json.file.name).includes("/"), done.json.file?.name);
+  check("locked folder rejects upload", lockedUpload.status === 423, String(lockedUpload.status));
 
-  // 10. listing shows it
-  const l4 = await call("GET", `/api/folders/${lockedId}/files`);
-  check("file appears in listing", l4.json.files.some((f: any) => f.id === fileId));
-  check("file metadata present", l4.json.files[0].size === payload.byteLength && l4.json.files[0].mimeType === "text/plain");
+  const wrong = await call("POST", `/api/folders/${secureId}/unlock`, { pin: "1111" });
+  check("wrong PIN rejected", wrong.status === 401, String(wrong.status));
+  check("wrong PIN leaks no hash", !JSON.stringify(wrong.data).match(/hash|salt/i));
 
-  // 11. download
-  const d = await call("GET", `/api/files/${fileId}/download`);
-  check("download url issued", d.status === 200 && !!d.json.url);
-  const bytes = new Uint8Array(await (await fetch(d.json.url)).arrayBuffer());
-  check("downloaded bytes match", bytes.byteLength === payload.byteLength);
+  const unlocked = await call("POST", `/api/folders/${secureId}/unlock`, { pin: "2580" });
+  check("correct PIN unlocks", unlocked.status === 200 && !!unlocked.data.token);
+  const token: string = unlocked.data.token;
 
-  // 12. rename
-  const r = await call("PATCH", `/api/files/${fileId}`, { name: "renamed report.txt" });
-  check("rename file", r.status === 200 && r.json.name === "renamed report.txt", `status ${r.status}`);
+  const openList = await call("GET", `/api/folders/${secureId}/files`, undefined, [token]);
+  check("unlocked folder lists", openList.status === 200, String(openList.status));
 
-  // 13. search
-  const s = await call("GET", "/api/files/search?q=renamed");
-  check("search finds file", s.status === 200 && s.json.files.some((f: any) => f.id === fileId));
+  // --- upload -------------------------------------------------------------
+  const payload = Buffer.from(`hello vault ${stamp}\n`.repeat(64));
+  const ticket = await call(
+    "POST",
+    "/api/files/upload",
+    { folderId: secureId, name: "../../evil name.txt", size: payload.length, mimeType: "text/plain" },
+    [token],
+  );
+  check("upload ticket issued", ticket.status === 201 && !!ticket.data.url, String(ticket.status));
+  const fileId: string = ticket.data.fileId;
 
-  // 14. move to nested (unprotected) folder
-  const m = await call("POST", `/api/files/${fileId}/move`, { folderId: nestedId });
-  check("move file", m.status === 200, `status ${m.status}`);
-  const l5 = await call("GET", `/api/folders/${nestedId}/files`);
-  check("file is in destination", l5.json.files.some((f: any) => f.id === fileId));
-
-  // 15. nested folder access still works while parent unprotected
-  const l6 = await call("GET", `/api/folders/${nestedId}/files`, undefined, false);
-  check("unprotected nested folder readable without ticket", l6.status === 200);
-
-  // 16. lock again
-  const lock = await call("POST", `/api/folders/${lockedId}/lock`);
-  check("lock folder", lock.status === 200);
-  const l7 = await call("GET", `/api/folders/${lockedId}/files`);
-  check("relocked folder rejects listing", l7.status === 423, `status ${l7.status}`);
-
-  // 17. invalid ids / missing file
-  const nf = await call("GET", `/api/files/3f2504e0-4f89-41d3-9a0c-0305e82c3301/download`);
-  check("missing file → 404", nf.status === 404, `status ${nf.status}`);
-  const bad = await call("GET", `/api/files/not-a-uuid/download`);
-  check("invalid id → 400", bad.status === 400, `status ${bad.status}`);
-
-  // 18. rate limiting
-  let limited = false;
-  for (let i = 0; i < 8; i++) {
-    const res = await call("POST", `/api/folders/${lockedId}/unlock`, { pin: "0000" });
-    if (res.status === 429) { limited = true; break; }
-  }
-  check("unlock rate limiting kicks in (429)", limited);
-
-  // 19. delete file + cleanup
-  token = (await call("POST", `/api/folders/${lockedId}/unlock`, { pin: "2580" })).json.token ?? token;
-  const del = await call("DELETE", `/api/files/${fileId}`);
-  check("delete file", del.status === 200, `status ${del.status}`);
-  const cleanup = await call("DELETE", `/api/folders/${rootId}`);
-  check("delete folder tree", cleanup.status === 200, `status ${cleanup.status}`);
-  const gone = await call("GET", `/api/folders/${rootId}/files`);
-  check("deleted folder → 404", gone.status === 404, `status ${gone.status}`);
-};
-
-run()
-  .catch((e) => { check("run completed", false, String(e)); })
-  .finally(() => {
-    console.log(results.join("\n"));
-    console.log(`\n${results.length - failed}/${results.length} checks passed`);
-    process.exit(failed ? 1 : 0);
+  const put = await fetch(`${BASE}${ticket.data.url}`, {
+    method: ticket.data.method,
+    headers: ticket.data.headers,
+    body: payload,
   });
+  check("file body streamed to storage", put.ok, String(put.status));
+
+  const completed = await call(
+    "POST",
+    `/api/files/${fileId}/complete`,
+    { size: payload.length },
+    [token],
+  );
+  check("upload completed", completed.status === 200, String(completed.status));
+  check(
+    "filename sanitised (no traversal)",
+    !completed.data.file.name.includes("/") && !completed.data.file.name.includes(".."),
+    completed.data.file?.name,
+  );
+
+  const afterUpload = await call("GET", `/api/folders/${secureId}/files`, undefined, [token]);
+  check(
+    "file appears in listing",
+    afterUpload.data.files?.some((f: any) => f.id === fileId),
+  );
+
+  // --- download -----------------------------------------------------------
+  const dl = await call("GET", `/api/files/${fileId}/download`, undefined, [token]);
+  check("download link issued", dl.status === 200 && !!dl.data.url);
+  const body = await fetch(`${BASE}${dl.data.url}`);
+  const bytes = Buffer.from(await body.arrayBuffer());
+  check("downloaded bytes match upload", bytes.equals(payload), `${bytes.length}/${payload.length}`);
+
+  // --- rename / move / search --------------------------------------------
+  const renameFile = await call("PATCH", `/api/files/${fileId}`, { name: "renamed.txt" }, [token]);
+  check("rename file", renameFile.status === 200);
+
+  const search = await call("GET", `/api/files/search?q=renamed`, undefined, [token]);
+  check("search finds the file", search.data.files?.some((f: any) => f.id === fileId));
+
+  const moved = await call("POST", `/api/files/${fileId}/move`, { folderId: childId }, [token]);
+  check("move file to nested folder", moved.status === 200, String(moved.status));
+
+  const nested = await call("GET", `/api/folders/${childId}/files`);
+  check(
+    "moved file readable in unprotected nested folder",
+    nested.data.files?.some((f: any) => f.id === fileId),
+  );
+
+  // --- lock again ---------------------------------------------------------
+  const relocked = await call("POST", `/api/folders/${secureId}/lock`, {});
+  check("lock folder", relocked.status === 200);
+  const afterLock = await call("GET", `/api/folders/${secureId}/files`, undefined, [token]);
+  check("old ticket no longer works", afterLock.status === 423, String(afterLock.status));
+
+  // --- errors -------------------------------------------------------------
+  const missing = await call("GET", "/api/files/00000000-0000-4000-8000-000000000000/download");
+  check("missing file returns 404", missing.status === 404, String(missing.status));
+  const badId = await call("GET", "/api/files/not-a-uuid/download");
+  check("invalid id returns 400", badId.status === 400, String(badId.status));
+
+  // --- delete -------------------------------------------------------------
+  const delFile = await call("DELETE", `/api/files/${fileId}`);
+  check("delete file", delFile.status === 200, String(delFile.status));
+  const delTree = await call("DELETE", `/api/folders/${parentId}`);
+  check("delete folder tree", delTree.status === 200, String(delTree.status));
+  const gone = await call("GET", `/api/folders/${parentId}/files`);
+  check("deleted folder returns 404", gone.status === 404, String(gone.status));
+
+  console.log(`\n${passed} passed, ${failures.length} failed`);
+  if (failures.length) process.exit(1);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

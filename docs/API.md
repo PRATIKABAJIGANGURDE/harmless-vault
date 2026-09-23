@@ -48,6 +48,17 @@ Base URL: `VITE_API_BASE_URL` (empty = same origin).
 | GET | `/api/files/search` | `?q=&sort=&direction=` | `{ files }` |
 | GET | `/api/stats` | — | `{ fileCount, folderCount, totalSize, unlockedCount }` |
 
+## Streaming endpoint (bundled backend)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| PUT | `/api/storage/:token` | Streams a request body to disk (upload ticket) |
+| GET | `/api/storage/:token` | Streams a file body from disk, honours `Range` (download / preview ticket) |
+
+Tickets are opaque, single-purpose, stored hashed with an expiry (upload 12 h,
+download / preview 5 min). A different backend may expose its own equivalent
+path — the frontend only follows the `url` it is handed.
+
 ### Upload / download are two-step by design
 
 `POST /api/files/upload` returns a short-lived ticket; the browser streams the

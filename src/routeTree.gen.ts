@@ -18,6 +18,7 @@ import { Route as ApiFilesSearchRouteImport } from './routes/api/files.search'
 import { Route as ApiFilesUploadRouteImport } from './routes/api/files.upload'
 import { Route as ApiFoldersIdRouteImport } from './routes/api/folders.$id'
 import { Route as ApiFoldersTreeRouteImport } from './routes/api/folders.tree'
+import { Route as ApiStorageTokenRouteImport } from './routes/api/storage.$token'
 import { Route as ApiFilesIdCompleteRouteImport } from './routes/api/files.$id.complete'
 import { Route as ApiFilesIdDownloadRouteImport } from './routes/api/files.$id.download'
 import { Route as ApiFilesIdMoveRouteImport } from './routes/api/files.$id.move'
@@ -70,6 +71,11 @@ const ApiFoldersTreeRoute = ApiFoldersTreeRouteImport.update({
   path: '/tree',
   getParentRoute: () => ApiFoldersRoute,
 } as any)
+const ApiStorageTokenRoute = ApiStorageTokenRouteImport.update({
+  id: '/api/storage/$token',
+  path: '/api/storage/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiFilesIdCompleteRoute = ApiFilesIdCompleteRouteImport.update({
   id: '/complete',
   path: '/complete',
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/api/files/upload': typeof ApiFilesUploadRoute
   '/api/folders/$id': typeof ApiFoldersIdRouteWithChildren
   '/api/folders/tree': typeof ApiFoldersTreeRoute
+  '/api/storage/$token': typeof ApiStorageTokenRoute
   '/api/files/$id/complete': typeof ApiFilesIdCompleteRoute
   '/api/files/$id/download': typeof ApiFilesIdDownloadRoute
   '/api/files/$id/move': typeof ApiFilesIdMoveRoute
@@ -128,6 +135,7 @@ export interface FileRoutesByTo {
   '/api/files/upload': typeof ApiFilesUploadRoute
   '/api/folders/$id': typeof ApiFoldersIdRouteWithChildren
   '/api/folders/tree': typeof ApiFoldersTreeRoute
+  '/api/storage/$token': typeof ApiStorageTokenRoute
   '/api/files/$id/complete': typeof ApiFilesIdCompleteRoute
   '/api/files/$id/download': typeof ApiFilesIdDownloadRoute
   '/api/files/$id/move': typeof ApiFilesIdMoveRoute
@@ -146,6 +154,7 @@ export interface FileRoutesById {
   '/api/files/upload': typeof ApiFilesUploadRoute
   '/api/folders/$id': typeof ApiFoldersIdRouteWithChildren
   '/api/folders/tree': typeof ApiFoldersTreeRoute
+  '/api/storage/$token': typeof ApiStorageTokenRoute
   '/api/files/$id/complete': typeof ApiFilesIdCompleteRoute
   '/api/files/$id/download': typeof ApiFilesIdDownloadRoute
   '/api/files/$id/move': typeof ApiFilesIdMoveRoute
@@ -165,6 +174,7 @@ export interface FileRouteTypes {
     | '/api/files/upload'
     | '/api/folders/$id'
     | '/api/folders/tree'
+    | '/api/storage/$token'
     | '/api/files/$id/complete'
     | '/api/files/$id/download'
     | '/api/files/$id/move'
@@ -182,6 +192,7 @@ export interface FileRouteTypes {
     | '/api/files/upload'
     | '/api/folders/$id'
     | '/api/folders/tree'
+    | '/api/storage/$token'
     | '/api/files/$id/complete'
     | '/api/files/$id/download'
     | '/api/files/$id/move'
@@ -199,6 +210,7 @@ export interface FileRouteTypes {
     | '/api/files/upload'
     | '/api/folders/$id'
     | '/api/folders/tree'
+    | '/api/storage/$token'
     | '/api/files/$id/complete'
     | '/api/files/$id/download'
     | '/api/files/$id/move'
@@ -215,6 +227,7 @@ export interface RootRouteChildren {
   ApiFilesIdRoute: typeof ApiFilesIdRouteWithChildren
   ApiFilesSearchRoute: typeof ApiFilesSearchRoute
   ApiFilesUploadRoute: typeof ApiFilesUploadRoute
+  ApiStorageTokenRoute: typeof ApiStorageTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -281,6 +294,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/folders/tree'
       preLoaderRoute: typeof ApiFoldersTreeRouteImport
       parentRoute: typeof ApiFoldersRoute
+    }
+    '/api/storage/$token': {
+      id: '/api/storage/$token'
+      path: '/api/storage/$token'
+      fullPath: '/api/storage/$token'
+      preLoaderRoute: typeof ApiStorageTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/files/$id/complete': {
       id: '/api/files/$id/complete'
@@ -381,6 +401,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFilesIdRoute: ApiFilesIdRouteWithChildren,
   ApiFilesSearchRoute: ApiFilesSearchRoute,
   ApiFilesUploadRoute: ApiFilesUploadRoute,
+  ApiStorageTokenRoute: ApiStorageTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -62,6 +62,17 @@ async function send<T>(method: string, path: string, body?: unknown, query?: Rec
   return parse<T>(response);
 }
 
+/**
+ * The API hands out relative storage links ("/api/storage/..."). Resolving them
+ * here keeps them pointing at the configured backend, even when that backend is
+ * the phone on the LAN rather than the origin serving the page.
+ */
+function resolve(url: string | null): string | null {
+  if (!url) return null;
+  if (/^[a-z]+:/i.test(url)) return url;
+  return buildUrl(url);
+}
+
 export const api = {
   get: <T>(path: string, query?: Record<string, string | number | null | undefined>) =>
     send<T>("GET", path, undefined, query),
@@ -69,5 +80,6 @@ export const api = {
   patch: <T>(path: string, body: unknown) => send<T>("PATCH", path, body),
   delete: <T>(path: string) => send<T>("DELETE", path),
   url: buildUrl,
+  resolve,
   unlockHeaders: () => headers(false),
 };
