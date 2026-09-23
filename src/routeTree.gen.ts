@@ -10,11 +10,34 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiFoldersRouteImport } from './routes/api/folders'
+import { Route as ApiStatsRouteImport } from './routes/api/stats'
 import { Route as FFolderIdRouteImport } from './routes/f.$folderId'
+import { Route as ApiFilesIdRouteImport } from './routes/api/files.$id'
+import { Route as ApiFilesSearchRouteImport } from './routes/api/files.search'
+import { Route as ApiFilesUploadRouteImport } from './routes/api/files.upload'
+import { Route as ApiFoldersIdRouteImport } from './routes/api/folders.$id'
+import { Route as ApiFoldersTreeRouteImport } from './routes/api/folders.tree'
+import { Route as ApiFilesIdCompleteRouteImport } from './routes/api/files.$id.complete'
+import { Route as ApiFilesIdDownloadRouteImport } from './routes/api/files.$id.download'
+import { Route as ApiFilesIdMoveRouteImport } from './routes/api/files.$id.move'
+import { Route as ApiFoldersIdFilesRouteImport } from './routes/api/folders.$id.files'
+import { Route as ApiFoldersIdLockRouteImport } from './routes/api/folders.$id.lock'
+import { Route as ApiFoldersIdUnlockRouteImport } from './routes/api/folders.$id.unlock'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiFoldersRoute = ApiFoldersRouteImport.update({
+  id: '/api/folders',
+  path: '/api/folders',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiStatsRoute = ApiStatsRouteImport.update({
+  id: '/api/stats',
+  path: '/api/stats',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FFolderIdRoute = FFolderIdRouteImport.update({
@@ -22,31 +45,176 @@ const FFolderIdRoute = FFolderIdRouteImport.update({
   path: '/f/$folderId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiFilesIdRoute = ApiFilesIdRouteImport.update({
+  id: '/api/files/$id',
+  path: '/api/files/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiFilesSearchRoute = ApiFilesSearchRouteImport.update({
+  id: '/api/files/search',
+  path: '/api/files/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiFilesUploadRoute = ApiFilesUploadRouteImport.update({
+  id: '/api/files/upload',
+  path: '/api/files/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiFoldersIdRoute = ApiFoldersIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ApiFoldersRoute,
+} as any)
+const ApiFoldersTreeRoute = ApiFoldersTreeRouteImport.update({
+  id: '/tree',
+  path: '/tree',
+  getParentRoute: () => ApiFoldersRoute,
+} as any)
+const ApiFilesIdCompleteRoute = ApiFilesIdCompleteRouteImport.update({
+  id: '/complete',
+  path: '/complete',
+  getParentRoute: () => ApiFilesIdRoute,
+} as any)
+const ApiFilesIdDownloadRoute = ApiFilesIdDownloadRouteImport.update({
+  id: '/download',
+  path: '/download',
+  getParentRoute: () => ApiFilesIdRoute,
+} as any)
+const ApiFilesIdMoveRoute = ApiFilesIdMoveRouteImport.update({
+  id: '/move',
+  path: '/move',
+  getParentRoute: () => ApiFilesIdRoute,
+} as any)
+const ApiFoldersIdFilesRoute = ApiFoldersIdFilesRouteImport.update({
+  id: '/files',
+  path: '/files',
+  getParentRoute: () => ApiFoldersIdRoute,
+} as any)
+const ApiFoldersIdLockRoute = ApiFoldersIdLockRouteImport.update({
+  id: '/lock',
+  path: '/lock',
+  getParentRoute: () => ApiFoldersIdRoute,
+} as any)
+const ApiFoldersIdUnlockRoute = ApiFoldersIdUnlockRouteImport.update({
+  id: '/unlock',
+  path: '/unlock',
+  getParentRoute: () => ApiFoldersIdRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/folders': typeof ApiFoldersRouteWithChildren
+  '/api/stats': typeof ApiStatsRoute
   '/f/$folderId': typeof FFolderIdRoute
+  '/api/files/$id': typeof ApiFilesIdRouteWithChildren
+  '/api/files/search': typeof ApiFilesSearchRoute
+  '/api/files/upload': typeof ApiFilesUploadRoute
+  '/api/folders/$id': typeof ApiFoldersIdRouteWithChildren
+  '/api/folders/tree': typeof ApiFoldersTreeRoute
+  '/api/files/$id/complete': typeof ApiFilesIdCompleteRoute
+  '/api/files/$id/download': typeof ApiFilesIdDownloadRoute
+  '/api/files/$id/move': typeof ApiFilesIdMoveRoute
+  '/api/folders/$id/files': typeof ApiFoldersIdFilesRoute
+  '/api/folders/$id/lock': typeof ApiFoldersIdLockRoute
+  '/api/folders/$id/unlock': typeof ApiFoldersIdUnlockRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/folders': typeof ApiFoldersRouteWithChildren
+  '/api/stats': typeof ApiStatsRoute
   '/f/$folderId': typeof FFolderIdRoute
+  '/api/files/$id': typeof ApiFilesIdRouteWithChildren
+  '/api/files/search': typeof ApiFilesSearchRoute
+  '/api/files/upload': typeof ApiFilesUploadRoute
+  '/api/folders/$id': typeof ApiFoldersIdRouteWithChildren
+  '/api/folders/tree': typeof ApiFoldersTreeRoute
+  '/api/files/$id/complete': typeof ApiFilesIdCompleteRoute
+  '/api/files/$id/download': typeof ApiFilesIdDownloadRoute
+  '/api/files/$id/move': typeof ApiFilesIdMoveRoute
+  '/api/folders/$id/files': typeof ApiFoldersIdFilesRoute
+  '/api/folders/$id/lock': typeof ApiFoldersIdLockRoute
+  '/api/folders/$id/unlock': typeof ApiFoldersIdUnlockRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/folders': typeof ApiFoldersRouteWithChildren
+  '/api/stats': typeof ApiStatsRoute
   '/f/$folderId': typeof FFolderIdRoute
+  '/api/files/$id': typeof ApiFilesIdRouteWithChildren
+  '/api/files/search': typeof ApiFilesSearchRoute
+  '/api/files/upload': typeof ApiFilesUploadRoute
+  '/api/folders/$id': typeof ApiFoldersIdRouteWithChildren
+  '/api/folders/tree': typeof ApiFoldersTreeRoute
+  '/api/files/$id/complete': typeof ApiFilesIdCompleteRoute
+  '/api/files/$id/download': typeof ApiFilesIdDownloadRoute
+  '/api/files/$id/move': typeof ApiFilesIdMoveRoute
+  '/api/folders/$id/files': typeof ApiFoldersIdFilesRoute
+  '/api/folders/$id/lock': typeof ApiFoldersIdLockRoute
+  '/api/folders/$id/unlock': typeof ApiFoldersIdUnlockRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/f/$folderId'
+  fullPaths:
+    | '/'
+    | '/api/folders'
+    | '/api/stats'
+    | '/f/$folderId'
+    | '/api/files/$id'
+    | '/api/files/search'
+    | '/api/files/upload'
+    | '/api/folders/$id'
+    | '/api/folders/tree'
+    | '/api/files/$id/complete'
+    | '/api/files/$id/download'
+    | '/api/files/$id/move'
+    | '/api/folders/$id/files'
+    | '/api/folders/$id/lock'
+    | '/api/folders/$id/unlock'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/f/$folderId'
-  id: '__root__' | '/' | '/f/$folderId'
+  to:
+    | '/'
+    | '/api/folders'
+    | '/api/stats'
+    | '/f/$folderId'
+    | '/api/files/$id'
+    | '/api/files/search'
+    | '/api/files/upload'
+    | '/api/folders/$id'
+    | '/api/folders/tree'
+    | '/api/files/$id/complete'
+    | '/api/files/$id/download'
+    | '/api/files/$id/move'
+    | '/api/folders/$id/files'
+    | '/api/folders/$id/lock'
+    | '/api/folders/$id/unlock'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/folders'
+    | '/api/stats'
+    | '/f/$folderId'
+    | '/api/files/$id'
+    | '/api/files/search'
+    | '/api/files/upload'
+    | '/api/folders/$id'
+    | '/api/folders/tree'
+    | '/api/files/$id/complete'
+    | '/api/files/$id/download'
+    | '/api/files/$id/move'
+    | '/api/folders/$id/files'
+    | '/api/folders/$id/lock'
+    | '/api/folders/$id/unlock'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiFoldersRoute: typeof ApiFoldersRouteWithChildren
+  ApiStatsRoute: typeof ApiStatsRoute
   FFolderIdRoute: typeof FFolderIdRoute
+  ApiFilesIdRoute: typeof ApiFilesIdRouteWithChildren
+  ApiFilesSearchRoute: typeof ApiFilesSearchRoute
+  ApiFilesUploadRoute: typeof ApiFilesUploadRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -58,6 +226,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/folders': {
+      id: '/api/folders'
+      path: '/api/folders'
+      fullPath: '/api/folders'
+      preLoaderRoute: typeof ApiFoldersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stats': {
+      id: '/api/stats'
+      path: '/api/stats'
+      fullPath: '/api/stats'
+      preLoaderRoute: typeof ApiStatsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/f/$folderId': {
       id: '/f/$folderId'
       path: '/f/$folderId'
@@ -65,12 +247,140 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FFolderIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/files/$id': {
+      id: '/api/files/$id'
+      path: '/api/files/$id'
+      fullPath: '/api/files/$id'
+      preLoaderRoute: typeof ApiFilesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/files/search': {
+      id: '/api/files/search'
+      path: '/api/files/search'
+      fullPath: '/api/files/search'
+      preLoaderRoute: typeof ApiFilesSearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/files/upload': {
+      id: '/api/files/upload'
+      path: '/api/files/upload'
+      fullPath: '/api/files/upload'
+      preLoaderRoute: typeof ApiFilesUploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/folders/$id': {
+      id: '/api/folders/$id'
+      path: '/$id'
+      fullPath: '/api/folders/$id'
+      preLoaderRoute: typeof ApiFoldersIdRouteImport
+      parentRoute: typeof ApiFoldersRoute
+    }
+    '/api/folders/tree': {
+      id: '/api/folders/tree'
+      path: '/tree'
+      fullPath: '/api/folders/tree'
+      preLoaderRoute: typeof ApiFoldersTreeRouteImport
+      parentRoute: typeof ApiFoldersRoute
+    }
+    '/api/files/$id/complete': {
+      id: '/api/files/$id/complete'
+      path: '/complete'
+      fullPath: '/api/files/$id/complete'
+      preLoaderRoute: typeof ApiFilesIdCompleteRouteImport
+      parentRoute: typeof ApiFilesIdRoute
+    }
+    '/api/files/$id/download': {
+      id: '/api/files/$id/download'
+      path: '/download'
+      fullPath: '/api/files/$id/download'
+      preLoaderRoute: typeof ApiFilesIdDownloadRouteImport
+      parentRoute: typeof ApiFilesIdRoute
+    }
+    '/api/files/$id/move': {
+      id: '/api/files/$id/move'
+      path: '/move'
+      fullPath: '/api/files/$id/move'
+      preLoaderRoute: typeof ApiFilesIdMoveRouteImport
+      parentRoute: typeof ApiFilesIdRoute
+    }
+    '/api/folders/$id/files': {
+      id: '/api/folders/$id/files'
+      path: '/files'
+      fullPath: '/api/folders/$id/files'
+      preLoaderRoute: typeof ApiFoldersIdFilesRouteImport
+      parentRoute: typeof ApiFoldersIdRoute
+    }
+    '/api/folders/$id/lock': {
+      id: '/api/folders/$id/lock'
+      path: '/lock'
+      fullPath: '/api/folders/$id/lock'
+      preLoaderRoute: typeof ApiFoldersIdLockRouteImport
+      parentRoute: typeof ApiFoldersIdRoute
+    }
+    '/api/folders/$id/unlock': {
+      id: '/api/folders/$id/unlock'
+      path: '/unlock'
+      fullPath: '/api/folders/$id/unlock'
+      preLoaderRoute: typeof ApiFoldersIdUnlockRouteImport
+      parentRoute: typeof ApiFoldersIdRoute
+    }
   }
 }
 
+interface ApiFoldersIdRouteChildren {
+  ApiFoldersIdFilesRoute: typeof ApiFoldersIdFilesRoute
+  ApiFoldersIdLockRoute: typeof ApiFoldersIdLockRoute
+  ApiFoldersIdUnlockRoute: typeof ApiFoldersIdUnlockRoute
+}
+
+const ApiFoldersIdRouteChildren: ApiFoldersIdRouteChildren = {
+  ApiFoldersIdFilesRoute: ApiFoldersIdFilesRoute,
+  ApiFoldersIdLockRoute: ApiFoldersIdLockRoute,
+  ApiFoldersIdUnlockRoute: ApiFoldersIdUnlockRoute,
+}
+
+const ApiFoldersIdRouteWithChildren = ApiFoldersIdRoute._addFileChildren(
+  ApiFoldersIdRouteChildren,
+)
+
+interface ApiFoldersRouteChildren {
+  ApiFoldersIdRoute: typeof ApiFoldersIdRouteWithChildren
+  ApiFoldersTreeRoute: typeof ApiFoldersTreeRoute
+}
+
+const ApiFoldersRouteChildren: ApiFoldersRouteChildren = {
+  ApiFoldersIdRoute: ApiFoldersIdRouteWithChildren,
+  ApiFoldersTreeRoute: ApiFoldersTreeRoute,
+}
+
+const ApiFoldersRouteWithChildren = ApiFoldersRoute._addFileChildren(
+  ApiFoldersRouteChildren,
+)
+
+interface ApiFilesIdRouteChildren {
+  ApiFilesIdCompleteRoute: typeof ApiFilesIdCompleteRoute
+  ApiFilesIdDownloadRoute: typeof ApiFilesIdDownloadRoute
+  ApiFilesIdMoveRoute: typeof ApiFilesIdMoveRoute
+}
+
+const ApiFilesIdRouteChildren: ApiFilesIdRouteChildren = {
+  ApiFilesIdCompleteRoute: ApiFilesIdCompleteRoute,
+  ApiFilesIdDownloadRoute: ApiFilesIdDownloadRoute,
+  ApiFilesIdMoveRoute: ApiFilesIdMoveRoute,
+}
+
+const ApiFilesIdRouteWithChildren = ApiFilesIdRoute._addFileChildren(
+  ApiFilesIdRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiFoldersRoute: ApiFoldersRouteWithChildren,
+  ApiStatsRoute: ApiStatsRoute,
   FFolderIdRoute: FFolderIdRoute,
+  ApiFilesIdRoute: ApiFilesIdRouteWithChildren,
+  ApiFilesSearchRoute: ApiFilesSearchRoute,
+  ApiFilesUploadRoute: ApiFilesUploadRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

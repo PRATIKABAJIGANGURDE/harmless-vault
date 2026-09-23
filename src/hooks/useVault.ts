@@ -1,21 +1,13 @@
+// React data hooks. They only talk to the service layer, never to a backend
+// directly, so pointing the app at a different API is a configuration change.
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
 
-import {
-  createFolder,
-  deleteFile,
-  deleteFolder,
-  fetchFolderView,
-  fetchVaultStats,
-  getDownloadUrl,
-  lockFolder,
-  removeFolderPin,
-  renameFile,
-  renameFolder,
-  setFolderPin,
-  unlockFolder,
-} from "@/lib/vault.functions";
-import { unlockStore } from "@/lib/vault/session";
+import * as files from "@/services/files";
+import * as folders from "@/services/folders";
+import { unlockStore } from "@/services/session";
+import type { SortDirection, SortKey } from "@/lib/vault/types";
 
 /** Re-renders whenever an unlock ticket is added or cleared. */
 export function useUnlockTokens(): string[] {
@@ -29,11 +21,17 @@ export function useUnlockTokens(): string[] {
     .filter(Boolean);
 }
 
-export function useFolderView(folderId: string | null) {
+export interface ViewOptions {
+  search: string;
+  sort: SortKey;
+  direction: SortDirection;
+}
+
+export function useFolderView(folderId: string | null, options: ViewOptions) {
   const tokens = useUnlockTokens();
   return useQuery({
-    queryKey: ["folder-view", folderId, tokens.join(",")],
-    queryFn: () => fetchFolderView({ data: { folderId, tokens } }),
+    queryKey: ["folder-view", folderId, tokens.join(","), options],
+    queryFn: () => folders.getFolderView(folderId, options),
     retry: false,
   });
 }
@@ -42,32 +40,43 @@ export function useVaultStats() {
   const tokens = useUnlockTokens();
   return useQuery({
     queryKey: ["vault-stats", tokens.join(",")],
-    queryFn: () => fetchVaultStats({ data: { tokens } }),
+    queryFn: () => folders.getStats(),
+    retry: false,
+  });
+}
+
+export function useFolderTree(enabled: boolean) {
+  const tokens = useUnlockTokens();
+  return useQuery({
+    queryKey: ["folder-tree", tokens.join(",")],
+    queryFn: () => folders.listFolderTree(),
+    enabled,
     retry: false,
   });
 }
 
 export function useVaultActions() {
   const queryClient = useQueryClient();
-  const tokens = useUnlockTokens();
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["folder-view"] });
     queryClient.invalidateQueries({ queryKey: ["vault-stats"] });
+    queryClient.invalidateQueries({ queryKey: ["folder-tree"] });
   };
 
   return {
+    invalidate,
     createFolder: useMutation({
       mutationFn: (input: { name: string; parentId: string | null; pin?: string | null }) =>
-        createFolder({ data: { ...input, tokens } }),
+        folders.createFolder(input),
       onSuccess: invalidate,
     }),
     renameFolder: useMutation({
       mutationFn: (input: { folderId: string; name: string }) =>
-        renameFolder({ data: { ...input, tokens } }),
+        folders.renameFolder(input.folderId, input.name),
       onSuccess: invalidate,
     }),
     deleteFolder: useMutation({
-      mutationFn: (folderId: string) => deleteFolder({ data: { folderId, tokens } }),
+      mutationFn: (folderId: string) => folders.deleteFolder(folderId),
       onSuccess: (_d, folderId) => {
         unlockStore.clear(folderId);
         invalidate();
@@ -75,56 +84,45 @@ export function useVaultActions() {
     }),
     setPin: useMutation({
       mutationFn: (input: { folderId: string; pin: string }) =>
-        setFolderPin({ data: { ...input, tokens } }),
+        folders.setFolderPin(input.folderId, input.pin),
       onSuccess: (_d, input) => {
         unlockStore.clear(input.folderId);
         invalidate();
       },
     }),
     removePin: useMutation({
-      mutationFn: (folderId: string) => removeFolderPin({ data: { folderId, tokens } }),
+      mutationFn: (folderId: string) => folders.removeFolderPin(folderId),
       onSuccess: (_d, folderId) => {
         unlockStore.clear(folderId);
         invalidate();
       },
     }),
     unlock: useMutation({
-      mutationFn: (input: { folderId: string; pin: string }) => unlockFolder({ data: input }),
-      onSuccess: (result, input) => {
-        if (result.token && result.expiresAt) {
-          unlockStore.set(input.folderId, result.token, result.expiresAt);
-        }
-        invalidate();
-      },
+      mutationFn: (input: { folderId: string; pin: string }) =>
+        folders.unlockFolder(input.folderId, input.pin),
+      onSuccess: invalidate,
     }),
     lock: useMutation({
-      mutationFn: (folderId: string) => lockFolder({ data: { folderId } }),
-      onSuccess: (_d, folderId) => {
-        unlockStore.clear(folderId);
-        invalidate();
-      },
+      mutationFn: (folderId: string) => folders.lockFolder(folderId),
+      onSuccess: invalidate,
     }),
     renameFile: useMutation({
       mutationFn: (input: { fileId: string; name: string }) =>
-        renameFile({ data: { ...input, tokens } }),
+        files.renameFile(input.fileId, input.name),
+      onSuccess: invalidate,
+    }),
+    moveFile: useMutation({
+      mutationFn: (input: { fileId: string; folderId: string | null }) =>
+        files.moveFile(input.fileId, input.folderId),
       onSuccess: invalidate,
     }),
     deleteFile: useMutation({
-      mutationFn: (fileId: string) => deleteFile({ data: { fileId, tokens } }),
+      mutationFn: (fileId: string) => files.deleteFile(fileId),
       onSuccess: invalidate,
     }),
     download: useMutation({
-      mutationFn: (fileId: string) => getDownloadUrl({ data: { fileId, tokens } }),
-      onSuccess: (result) => {
-        // Streams from storage to disk; the file never enters page memory.
-        const link = document.createElement("a");
-        link.href = result.url;
-        link.download = result.name;
-        link.rel = "noopener";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-      },
+      mutationFn: (fileId: string) => files.getDownload(fileId),
+      onSuccess: (result) => files.triggerBrowserDownload(result.url, result.name),
     }),
   };
 }

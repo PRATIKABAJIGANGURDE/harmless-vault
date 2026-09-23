@@ -30,22 +30,29 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { useFolderView, useUnlockTokens, useVaultActions, useVaultStats } from "@/hooks/useVault";
+import {
+  useFolderTree,
+  useFolderView,
+  useVaultActions,
+  useVaultStats,
+} from "@/hooks/useVault";
+import { useUploads } from "@/hooks/useUploads";
 import { cn, formatBytes } from "@/lib/utils";
-import { uploadFile } from "@/lib/vault/upload";
-import type { VaultFile, VaultFolder } from "@/lib/vault/types";
+import type { SortDirection, SortKey, VaultFile, VaultFolder } from "@/lib/vault/types";
 import { isLockedError } from "@/lib/vault/types";
 
 type PinMode = { kind: "unlock" | "set"; folder: VaultFolder | null; folderId: string } | null;
 
 export function VaultBrowser({ folderId }: { folderId: string | null }) {
   const navigate = useNavigate();
-  const tokens = useUnlockTokens();
-  const view = useFolderView(folderId);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortKey>("created");
+  const [direction, setDirection] = useState<SortDirection>("desc");
+
+  const view = useFolderView(folderId, { search, sort, direction });
   const stats = useVaultStats();
   const actions = useVaultActions();
 
-  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [dragging, setDragging] = useState(false);
   const [pinMode, setPinMode] = useState<PinMode>(null);
   const [pinError, setPinError] = useState<string | null>(null);
@@ -56,53 +63,20 @@ export function VaultBrowser({ folderId }: { folderId: string | null }) {
   const [renaming, setRenaming] = useState<
     { kind: "folder" | "file"; id: string; name: string } | null
   >(null);
+  const [moving, setMoving] = useState<VaultFile | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const folderTree = useFolderTree(moving !== null);
   const locked = view.isError && isLockedError(view.error);
 
-  const startUploads = useCallback(
-    (files: File[]) => {
-      for (const file of files) {
-        const id = `${file.name}-${file.size}-${Date.now()}-${Math.random()}`;
-        const handle = uploadFile({
-          file,
-          folderId,
-          tokens,
-          onProgress: (progress) =>
-            setQueue((q) => q.map((i) => (i.id === id ? { ...i, progress } : i))),
-        });
-        setQueue((q) => [
-          ...q,
-          {
-            id,
-            name: file.name,
-            size: file.size,
-            progress: 0,
-            status: "uploading",
-            abort: handle.abort,
-          },
-        ]);
-        handle.done
-          .then(() => {
-            setQueue((q) =>
-              q.map((i) => (i.id === id ? { ...i, status: "done", progress: 100 } : i)),
-            );
-            view.refetch();
-            stats.refetch();
-          })
-          .catch((error: Error) => {
-            const message = isLockedError(error)
-              ? "This folder is locked. Unlock it to upload."
-              : error.message;
-            setQueue((q) =>
-              q.map((i) => (i.id === id ? { ...i, status: "error", error: message } : i)),
-            );
-            toast.error(message);
-          });
-      }
-    },
-    [folderId, tokens, view, stats],
-  );
+  const refreshAll = useCallback(() => {
+    void view.refetch();
+    void stats.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folderId]);
+
+  const uploads = useUploads(folderId, refreshAll);
+  const startUploads = uploads.start;
 
   const onDrop = (event: React.DragEvent) => {
     event.preventDefault();
@@ -325,6 +299,39 @@ export function VaultBrowser({ folderId }: { folderId: string | null }) {
               />
             </div>
 
+            <div className="mb-6 flex flex-wrap items-center gap-3">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search this folder"
+                  className="pl-9"
+                  aria-label="Search files in this folder"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                {(["created", "name", "size"] as SortKey[]).map((key) => (
+                  <Button
+                    key={key}
+                    size="sm"
+                    variant={sort === key ? "default" : "secondary"}
+                    onClick={() => setSort(key)}
+                  >
+                    {key === "created" ? "Newest" : key === "name" ? "Name" : "Size"}
+                  </Button>
+                ))}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setDirection((d) => (d === "asc" ? "desc" : "asc"))}
+                  aria-label="Toggle sort direction"
+                >
+                  <ArrowUpDown className="size-4" />
+                </Button>
+              </div>
+            </div>
+
             {view.isPending ? (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {Array.from({ length: 6 }).map((_, i) => (
@@ -396,6 +403,7 @@ export function VaultBrowser({ folderId }: { folderId: string | null }) {
                             })
                           }
                           onRename={(f) => setRenaming({ kind: "file", id: f.id, name: f.name })}
+                          onMove={(f) => setMoving(f)}
                           onDelete={(f) =>
                             actions.deleteFile.mutate(f.id, {
                               onSuccess: () => toast.success("File deleted"),
@@ -414,10 +422,74 @@ export function VaultBrowser({ folderId }: { folderId: string | null }) {
       </div>
 
       <UploadQueue
-        items={queue}
-        onDismiss={(id) => setQueue((q) => q.filter((i) => i.id !== id))}
-        onClear={() => setQueue([])}
+        items={uploads.queue}
+        onCancel={uploads.cancel}
+        onRetry={uploads.retry}
+        onDismiss={uploads.dismiss}
+        onClear={uploads.clear}
       />
+
+      <Dialog open={moving !== null} onOpenChange={(open) => !open && setMoving(null)}>
+        <DialogContent className="panel max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-display">Move file</DialogTitle>
+            <DialogDescription>
+              Choose a destination. Locked folders are not listed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-72 space-y-1 overflow-y-auto">
+            {folderTree.isPending ? (
+              <Skeleton className="h-10 w-full" />
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-secondary"
+                  onClick={() => {
+                    if (!moving) return;
+                    actions.moveFile.mutate(
+                      { fileId: moving.id, folderId: null },
+                      {
+                        onSuccess: () => {
+                          setMoving(null);
+                          toast.success("File moved");
+                        },
+                        onError: (e: Error) => toast.error(e.message),
+                      },
+                    );
+                  }}
+                >
+                  Vault root
+                </button>
+                {(folderTree.data ?? [])
+                  .filter((f) => f.id !== moving?.folderId)
+                  .map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-secondary"
+                      onClick={() => {
+                        if (!moving) return;
+                        actions.moveFile.mutate(
+                          { fileId: moving.id, folderId: f.id },
+                          {
+                            onSuccess: () => {
+                              setMoving(null);
+                              toast.success("File moved");
+                            },
+                            onError: (e: Error) => toast.error(e.message),
+                          },
+                        );
+                      }}
+                    >
+                      {f.name}
+                    </button>
+                  ))}
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <PinPad
         open={pinMode !== null}
